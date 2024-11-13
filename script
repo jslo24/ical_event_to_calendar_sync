@@ -1,0 +1,168 @@
+// Define an array of iCal feed configurations
+const ICAL_FEEDS = [
+  {
+    url: 'https://www.example.org/calendar/team_13_gmt.ics',
+    guests: ['random_email@yahoo.com']
+  },
+  {
+    url: 'https://www.example.org/calendar/team_114_gmt.ics',
+    guests: ['random_email2018@gmail.com','random_email@gmail.com']
+  }
+  // Add more feed configurations as needed
+];
+
+function syncCalendarEvents() {
+  const calendarId = 'primary';
+  const calendar = CalendarApp.getCalendarById(calendarId);
+  const now = new Date();
+  const oneYearFromNow = new Date();
+  oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+  const existingEvents = calendar.getEvents(now, oneYearFromNow);
+
+  ICAL_FEEDS.forEach(feed => {
+    const response = UrlFetchApp.fetch(feed.url);
+    const icalData = response.getContentText();
+    const icalEvents = parseICal(icalData);
+
+    icalEvents.forEach(icalEvent => {
+      const startTime = icalEvent.start ? parseICalDate(icalEvent.start) : null;
+      const endTime = icalEvent.end ? parseICalDate(icalEvent.end) : null;
+      
+      // Only process future events
+      if (startTime >= now || (endTime && endTime >= now)) {
+        const existingEvent = findMatchingEvent(existingEvents, icalEvent.title, startTime || endTime);
+
+        if (existingEvent) {
+          // Update existing event if needed
+          if (hasChanges(existingEvent, icalEvent, startTime, endTime)) {
+            updateEvent(existingEvent, icalEvent, feed.guests);
+            Logger.log('Updated event: ' + icalEvent.title);
+          }
+        } else {
+          // Create new event
+          createEvent(calendar, icalEvent, feed.guests);
+          Logger.log('Created new event: ' + icalEvent.title);
+        }
+      }
+    });
+  });
+}
+
+// The rest of the functions (findMatchingEvent, hasChanges, updateEvent, createEvent, parseICalDate, parseICal) remain the same as in the previous version
+
+function findMatchingEvent(existingEvents, title, referenceTime) {
+  const sameDay = (date1, date2) => {
+    return date1.getFullYear() === date2.getFullYear() &&
+           date1.getMonth() === date2.getMonth() &&
+           date1.getDate() === date2.getDate();
+  };
+  
+  return existingEvents.find(event => 
+    event.getTitle() === title &&
+    sameDay(event.getStartTime(), referenceTime)
+  );
+}
+
+function hasChanges(existingEvent, icalEvent, newStart, newEnd) {
+  const existingStart = existingEvent.getStartTime();
+  const existingEnd = existingEvent.getEndTime();
+  const newStartTime = newStart || (newEnd ? new Date(newEnd.getTime() - 3600000) : null);
+  const newEndTime = newEnd || (newStart ? new Date(newStart.getTime() + 3600000) : null);
+
+  return existingEvent.getDescription() !== icalEvent.description ||
+         existingEvent.getLocation() !== icalEvent.location ||
+         existingStart.getTime() !== newStartTime.getTime() ||
+         existingEnd.getTime() !== newEndTime.getTime();
+}
+
+function updateEvent(existingEvent, icalEvent, guests) {
+  existingEvent.setDescription(icalEvent.description);
+  existingEvent.setLocation(icalEvent.location);
+  
+  const startTime = icalEvent.start ? parseICalDate(icalEvent.start) : null;
+  const endTime = icalEvent.end ? parseICalDate(icalEvent.end) : null;
+  
+  if (startTime && endTime) {
+    existingEvent.setTime(startTime, endTime);
+  } else if (startTime) {
+    existingEvent.setTime(startTime, new Date(startTime.getTime() + 3600000));
+  } else if (endTime) {
+    existingEvent.setTime(new Date(endTime.getTime() - 3600000), endTime);
+  }
+  
+  // Update guests
+  const existingGuests = existingEvent.getGuestList().map(guest => guest.getEmail());
+  const guestsToAdd = guests.filter(guest => !existingGuests.includes(guest));
+  const guestsToRemove = existingGuests.filter(guest => !guests.includes(guest));
+  
+  guestsToAdd.forEach(guest => existingEvent.addGuest(guest));
+  guestsToRemove.forEach(guest => existingEvent.removeGuest(guest));
+}
+
+function createEvent(calendar, icalEvent, guests) {
+  let startTime, endTime;
+  
+  if (icalEvent.start && icalEvent.end) {
+    startTime = parseICalDate(icalEvent.start);
+    endTime = parseICalDate(icalEvent.end);
+  } else if (icalEvent.start) {
+    startTime = parseICalDate(icalEvent.start);
+    endTime = new Date(startTime.getTime() + 3600000); // 1 hour later
+  } else if (icalEvent.end) {
+    endTime = parseICalDate(icalEvent.end);
+    startTime = new Date(endTime.getTime() - 3600000); // 1 hour earlier
+  } else {
+    Logger.log('Skipping event creation due to missing both start and end times: ' + icalEvent.title);
+    return;
+  }
+
+  const event = calendar.createEvent(icalEvent.title, startTime, endTime, {
+    description: icalEvent.description,
+    location: icalEvent.location,
+    guests: guests.join(','),
+    sendInvites: true
+  });
+  event.setVisibility(CalendarApp.Visibility.PRIVATE);
+  event.setGuestsCanSeeGuests(false);
+}
+
+function parseICalDate(icalDateString) {
+    const year = icalDateString.substring(0, 4);
+    const month = icalDateString.substring(4, 6) - 1;
+    const day = icalDateString.substring(6, 8);
+    const hours = icalDateString.substring(9, 11);
+    const minutes = icalDateString.substring(11, 13);
+    const seconds = icalDateString.substring(13, 15);
+
+    return new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+}
+
+function parseICal(data) {
+    const events = [];
+    const regex = /BEGIN:VEVENT[\s\S]*?END:VEVENT/g;
+    const matches = data.match(regex);
+
+    if (matches) {
+        matches.forEach(match => {
+            Logger.log('Match Found: ' + match);
+
+            const titleMatch = match.match(/SUMMARY:(.*)/);
+            const startMatch = match.match(/DTSTART(;.*?)?:(.*)/);
+            const endMatch = match.match(/DTEND(;.*?)?:(.*)/);
+            const descriptionMatch = match.match(/DESCRIPTION:(.*)/);
+            const locationMatch = match.match(/LOCATION:(.*)/);
+
+            const title = titleMatch ? titleMatch[1] : 'No Title';
+            const start = startMatch ? startMatch[2] : null;
+            const end = endMatch ? endMatch[2] : null;
+            const description = descriptionMatch ? descriptionMatch[1] : '';
+            const location = locationMatch ? locationMatch[1] : '';
+
+            Logger.log('Parsed Event - Title: ' + title + ', Start: ' + start + ', End: ' + end + ', Description: ' + description + ', Location: ' + location);
+
+            // Always add the event, even if start or end is missing
+            events.push({ title, start, end, description, location });
+        });
+    }
+    return events;
+}
