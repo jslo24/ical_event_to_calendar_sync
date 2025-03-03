@@ -1,4 +1,4 @@
-I have written the associated script to read public iCal feed(s), create and synchronize private google calendar events with the public feed(s) to be shared with specified email recipients. The script as written:
+This script reads public iCal feed(s), creates and synchronizes a host calendar events with the source ical feed(s) to be shared with specified email recipients. The script as written:
 -- should never delete host calendar events
 -- updates specified fields with changes read from the public feed
 -- assumes a one hour duration for events in the public feed for which no end time is specified (to resolve an observed feed data issue from testing)
